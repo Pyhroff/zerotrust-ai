@@ -11,7 +11,7 @@ console = Console(highlight=False)
 BANNER = """\
 [bold green]
   _____              _____              _        ___  ___
- |__  /___ _ __ ___ |_   _| __ _   _ ___| |_    / _ \|_ _|
+ |__  /___ _ __ ___ |_   _| __ _   _ ___| |_    / _ \\|_ _|
    / // _ \\ '__/ _ \\  | || '__| | | / __| __|  / /_\\ \\ | |
   / /|  __/ | | (_) | | || |  | |_| \\__ \\ |_  /  _  \\ | |
  /____\\___|_|  \\___/  |_||_|   \\__,_|___/\\__| \\_/ \\_/|___|
@@ -290,6 +290,71 @@ def _print_check_table(title: str, checks: dict, overall: bool):
     else:
         console.print(Panel(
             "[bold red]  PROOF INVALID  [/bold red]",
+            border_style="red", expand=False,
+        ))
+
+
+@cli.command("tamper-demo")
+def tamper_demo():
+    """Show that modifying any proof field causes verification to fail."""
+    import copy
+    from .prompt import (
+        operator_setup, sign_session,
+        new_identity, prepare_prompt,
+        generate_proof, verify_proof,
+    )
+
+    console.print(BANNER)
+    console.rule("[bold red]tamper-demo -- soundness check[/bold red]")
+    console.print(
+        "\n[dim]Generates a valid zk-prompt proof, then tampers with each field "
+        "in turn to confirm every modification is detected.[/dim]\n"
+    )
+
+    op = operator_setup()
+    user = new_identity()
+    _, commitment, _ = prepare_prompt("What is the capital of France?")
+    session = sign_session(op["sk"], commitment, "The capital of France is Paris.", user["pk"])
+    proof = generate_proof(user["sk"], session, op["pk"])
+
+    base_result = verify_proof(proof)
+    assert base_result["valid"], "Base proof must be valid before tampering"
+    console.print("  [green]Base proof:  VALID[/green]")
+
+    tamperings = [
+        ("response swapped",       lambda p: {**p, "response": "I don't know."}),
+        ("pk_user flipped",        lambda p: {**p, "pk_user": p["pk_user"] ^ 1}),
+        ("operator_pk flipped",    lambda p: {**p, "operator_pk": p["operator_pk"] ^ 1}),
+        ("sig R incremented",      lambda p: {**p, "operator_sig": {**p["operator_sig"], "R": p["operator_sig"]["R"] + 1}}),
+        ("sig s zeroed",           lambda p: {**p, "operator_sig": {**p["operator_sig"], "s": 0}}),
+        ("identity proof R flipped", lambda p: {**p, "identity_proof": {**p["identity_proof"], "R": p["identity_proof"]["R"] ^ 1}}),
+        ("session hash corrupted", lambda p: {**p, "session_hash": "00" * 32}),
+        ("nonce mutated",          lambda p: {**p, "nonce": "ff" * 16}),
+    ]
+
+    all_rejected = True
+    for label, mutate in tamperings:
+        tampered = mutate(copy.deepcopy(proof))
+        try:
+            result = verify_proof(tampered)
+            accepted = result["valid"]
+        except Exception:
+            accepted = False
+
+        status = "[bold red]ACCEPTED (BUG)[/bold red]" if accepted else "[green]REJECTED[/green]"
+        console.print(f"  Tamper: {label:<35} -> {status}")
+        if accepted:
+            all_rejected = False
+
+    console.print()
+    if all_rejected:
+        console.print(Panel(
+            "[bold green]  All tampering attempts rejected -- proof is sound  [/bold green]",
+            border_style="green", expand=False,
+        ))
+    else:
+        console.print(Panel(
+            "[bold red]  WARNING: a tampered proof was accepted  [/bold red]",
             border_style="red", expand=False,
         ))
 
