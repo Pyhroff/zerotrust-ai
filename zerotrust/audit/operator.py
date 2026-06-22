@@ -105,3 +105,25 @@ def _evaluate(constraint: str, response: str) -> str:
         raise ValueError(f"Unknown constraint format: {constraint}")
 
     return "PASS" if passed else "FAIL"
+
+
+def run_suite(
+    operator_sk: int,
+    suite,  # AuditSuite
+    model_fn,  # callable: (input: str) -> str
+) -> list[dict]:
+    """
+    Convenience wrapper: evaluate every test in the suite using model_fn
+    and return a list of signed results ready for generate_proof().
+
+    model_fn should accept a prompt string and return the model's response
+    string.  In production this would call the live inference endpoint;
+    in the demo it can be any callable including a mock.
+    """
+    results = []
+    for i in range(suite.size):
+        test = suite.get_test(i)
+        response = model_fn(test["input"])
+        sr = evaluate_and_sign(operator_sk, suite.root, i, test, response)
+        results.append(sr)
+    return results
