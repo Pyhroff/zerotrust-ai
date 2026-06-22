@@ -37,7 +37,8 @@ def prompt():
 
 @prompt.command("demo")
 @click.option("--reveal", is_flag=True, help="Also reveal the prompt contents")
-def prompt_demo(reveal: bool):
+@click.option("--output", "-o", default=None, metavar="FILE", help="Write proof JSON to file")
+def prompt_demo(reveal: bool, output: str):
     """Run a full zk-prompt demonstration."""
     from .prompt import (
         operator_setup, sign_session,
@@ -85,6 +86,9 @@ def prompt_demo(reveal: bool):
         "Session hash consistent":      result["session_hash_consistent"],
     }, result["valid"])
 
+    if output:
+        _write_proof(proof, output, "zk-prompt")
+
     if reveal:
         session_with_reveal = reveal_prompt(session, query, randomness)
         reveal_ok = verify_reveal(session_with_reveal)
@@ -105,7 +109,8 @@ def audit():
 
 
 @audit.command("demo")
-def audit_demo():
+@click.option("--output", "-o", default=None, metavar="FILE", help="Write proof JSON to file")
+def audit_demo(output: str):
     """Run a full zk-audit demonstration."""
     from .audit import (
         AuditSuite, operator_setup,
@@ -166,6 +171,9 @@ def audit_demo():
     console.print(f"\n  [dim]Suite root (public): {result['suite_root'][:32]}...[/dim]")
     console.print(f"  [dim]Number of tests verified: {result['num_tests']}[/dim]")
 
+    if output:
+        _write_proof(proof, output, "zk-audit")
+
 
 # ============================================================
 # zk-unlearn
@@ -178,7 +186,8 @@ def unlearn():
 
 
 @unlearn.command("demo")
-def unlearn_demo():
+@click.option("--output", "-o", default=None, metavar="FILE", help="Write proof JSON to file")
+def unlearn_demo(output: str):
     """Run a full zk-unlearn demonstration."""
     import numpy as np
     from .unlearn import (
@@ -254,6 +263,9 @@ def unlearn_demo():
         "pk_requester consistent":     result["pk_consistent"],
     }, result["valid"])
 
+    if output:
+        _write_proof(proof, output, "zk-unlearn")
+
 
 # ============================================================
 # helpers
@@ -280,6 +292,14 @@ def _print_check_table(title: str, checks: dict, overall: bool):
             "[bold red]  PROOF INVALID  [/bold red]",
             border_style="red", expand=False,
         ))
+
+
+def _write_proof(proof: dict, path: str, module: str):
+    import json
+    import os
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump({"module": module, "proof": proof}, f, indent=2)
+    console.print(f"\n  [dim]Proof written to {os.path.abspath(path)}[/dim]")
 
 
 if __name__ == "__main__":
