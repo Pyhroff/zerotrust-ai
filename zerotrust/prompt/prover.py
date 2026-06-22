@@ -52,6 +52,7 @@ def generate_proof(user_sk: int, session: dict, operator_pk: int) -> dict:
         "prompt_commitment": session["prompt_commitment"],
         "response": session["response"],
         "timestamp": session["timestamp"],
+        "nonce": session["nonce"],
         "operator_sig": session["sig"],
         "identity_proof": identity_proof,
     }
@@ -78,6 +79,7 @@ def verify_proof(proof: dict) -> dict:
         "response": proof["response"],
         "pk_user": proof["pk_user"],
         "timestamp": proof["timestamp"],
+        "nonce": proof["nonce"],
         "sig": proof["operator_sig"],
     }
     results["operator_sig_valid"] = verify_session(
@@ -99,5 +101,6 @@ def _session_hash(session: dict) -> bytes:
         + session["response"]
         + str(session["pk_user"])
         + str(session["timestamp"])
+        + session.get("nonce", "")
     )
     return hashlib.sha256(blob.encode()).digest()

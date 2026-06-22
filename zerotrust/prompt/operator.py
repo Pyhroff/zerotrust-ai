@@ -14,7 +14,7 @@ signature — the prompt commitment is hiding.  To selectively reveal the prompt
 """
 
 import hashlib
-import json
+import secrets
 import time
 
 from ..crypto.schnorr import keygen, sign, verify
@@ -30,12 +30,14 @@ def _session_message(
     response: str,
     pk_user: int,
     timestamp: int,
+    nonce: bytes,
 ) -> bytes:
     return hashlib.sha256(
         prompt_commitment
         + response.encode()
         + pk_user.to_bytes(256, "big")
         + timestamp.to_bytes(8, "big")
+        + nonce
     ).digest()
 
 
@@ -48,26 +50,34 @@ def sign_session(
     """
     Called by the operator after generating a response.
     Returns a signed session record the user stores locally.
+
+    A 128-bit nonce is included in the signed message so that even if an
+    attacker sees two sessions with identical (prompt_commitment, response,
+    pk_user), they cannot recycle one operator signature as proof of the other.
     """
     ts = int(time.time())
-    msg = _session_message(prompt_commitment, response, pk_user, ts)
+    nonce = secrets.token_bytes(16)
+    msg = _session_message(prompt_commitment, response, pk_user, ts, nonce)
     R, s = sign(operator_sk, msg)
     return {
         "prompt_commitment": prompt_commitment.hex(),
         "response": response,
         "pk_user": pk_user,
         "timestamp": ts,
+        "nonce": nonce.hex(),
         "sig": {"R": R, "s": s},
     }
 
 
 def verify_session(operator_pk: int, session: dict) -> bool:
     prompt_commitment = bytes.fromhex(session["prompt_commitment"])
+    nonce = bytes.fromhex(session["nonce"])
     msg = _session_message(
         prompt_commitment,
         session["response"],
         session["pk_user"],
         session["timestamp"],
+        nonce,
     )
     R = session["sig"]["R"]
     s = session["sig"]["s"]
