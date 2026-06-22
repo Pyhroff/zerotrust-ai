@@ -25,8 +25,11 @@ Trust model:
     disclosing the red-team test suite to anyone (including the model owner).
 """
 
+import hashlib
+
 from .suite import AuditSuite
-from .operator import verify_result
+from .operator import verify_result, _result_message
+from ..crypto.schnorr import batch_verify
 
 
 def generate_proof(
@@ -37,19 +40,34 @@ def generate_proof(
     """
     Build an audit proof from a completed set of signed results.
     Raises if any result is FAIL or has an invalid signature.
+    Uses batch_verify() to check all N operator signatures in one pass.
     """
     if len(signed_results) != suite.size:
         raise ValueError(
             f"Expected {suite.size} results, got {len(signed_results)}"
         )
 
+    # Batch-verify all operator signatures at once (more efficient than N individual checks)
+    batch_entries = []
+    for result in signed_results:
+        leaf_preimage = bytes.fromhex(result["_leaf_preimage"])
+        msg = _result_message(
+            bytes.fromhex(result["suite_root"]),
+            result["index"],
+            leaf_preimage,
+            result["result"],
+        )
+        batch_entries.append((operator_pk, msg, (result["sig"]["R"], result["sig"]["s"])))
+
+    if not batch_verify(batch_entries):
+        raise ValueError("Batch signature verification failed — at least one result signature is invalid")
+
     inclusion_proofs = []
     for i, result in enumerate(signed_results):
-        # 1. Signature valid?
-        if not verify_result(operator_pk, result):
-            raise ValueError(f"Invalid operator signature on result {i}")
+        # (Signatures already verified above via batch)
 
-        # 2. All pass?
+        # 1. All pass?
+
         if result["result"] != "PASS":
             raise ValueError(f"Test {i} did not pass - cannot generate proof")
 
@@ -89,11 +107,21 @@ def verify_proof(proof: dict) -> dict:
     suite_root = bytes.fromhex(proof["suite_root"])
     operator_pk = proof["operator_pk"]
 
+    # Batch-verify all signatures first
+    batch_entries = []
+    for signed_result in proof["signed_results"]:
+        leaf_preimage = bytes.fromhex(signed_result["_leaf_preimage"])
+        msg = _result_message(
+            suite_root, signed_result["index"], leaf_preimage, signed_result["result"]
+        )
+        batch_entries.append((operator_pk, msg, (signed_result["sig"]["R"], signed_result["sig"]["s"])))
+    batch_ok = batch_verify(batch_entries)
+
     for i, (signed_result, inc_proof) in enumerate(
         zip(proof["signed_results"], proof["inclusion_proofs"])
     ):
-        # Signature
-        results["sig_valid"].append(verify_result(operator_pk, signed_result))
+        # Signature (batch result applies to all; fall back to individual on failure)
+        results["sig_valid"].append(batch_ok and verify_result(operator_pk, signed_result))
 
         # Result is PASS
         results["all_pass"].append(signed_result["result"] == "PASS")
