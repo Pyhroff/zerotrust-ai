@@ -186,6 +186,7 @@ def unlearn_demo():
         operator_attest, commit_datapoint,
         generate_proof, verify_proof,
     )
+    from .unlearn.procedure import weight_delta_norm
     from .crypto.schnorr import keygen
 
     console.print(BANNER)
@@ -230,10 +231,12 @@ def unlearn_demo():
     ) / len(retain_mask)
     console.print(f"  Retain accuracy    : [yellow]{acc_prime:.1%}[/yellow]  [dim](model still works)[/dim]")
 
+    delta = weight_delta_norm(model, model_prime)
     C_M_prime, _ = model_prime.commit_weights()
+    console.print(f"  Weight delta L-inf : [yellow]{delta:.6f}[/yellow]  [dim](bounded change)[/dim]")
     console.print(f"  New commitment     : [yellow]{C_M_prime.hex()[:32]}...[/yellow]")
 
-    attestation = operator_attest(op_sk, C_M, C_d, C_M_prime)
+    attestation = operator_attest(op_sk, C_M, C_d, C_M_prime, weight_delta=delta)
     console.print(f"  Attestation sig R  : [yellow]{hex(attestation['sig']['R'])[:20]}...[/yellow]")
 
     req_sk, _ = keygen()

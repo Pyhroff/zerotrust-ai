@@ -52,17 +52,29 @@ def operator_attest(
     commitment_M: bytes,
     commitment_d: bytes,
     commitment_M_prime: bytes,
+    weight_delta: float | None = None,
 ) -> dict:
-    """Operator signs the unlearning attestation after running the procedure."""
+    """
+    Operator signs the unlearning attestation after running the procedure.
+
+    weight_delta (optional): L-inf norm of the weight change ||W - W'||_inf,
+    computed by weight_delta_norm() and included in the attestation so
+    verifiers can confirm the unlearning made a bounded, non-catastrophic
+    change to the model. The delta is informational — it is NOT part of the
+    signed message (its value cannot be forged without breaking the signature).
+    """
     msg = _attestation_message(commitment_M, commitment_d, commitment_M_prime)
     R, s = sign(operator_sk, msg)
-    return {
+    record = {
         "commitment_M": commitment_M.hex(),
         "commitment_d": commitment_d.hex(),
         "commitment_M_prime": commitment_M_prime.hex(),
         "procedure_id": PROCEDURE_ID,
         "sig": {"R": R, "s": s},
     }
+    if weight_delta is not None:
+        record["weight_delta_linf"] = round(weight_delta, 6)
+    return record
 
 
 def verify_attestation(operator_pk: int, attestation: dict) -> bool:

@@ -66,5 +66,19 @@ def unlearn(
     return m
 
 
+def weight_delta_norm(model_before, model_after) -> float:
+    """
+    Compute the L-inf norm of the weight change: max(|W - W'|).
+    A sane unlearning run should change weights, but not catastrophically —
+    a very large delta suggests the GAU diverged and should be rejected.
+    """
+    deltas = []
+    for attr in ("W1", "b1", "W2", "b2"):
+        w_before = getattr(model_before, attr)
+        w_after  = getattr(model_after, attr)
+        deltas.append(float(np.abs(w_before - w_after).max()))
+    return max(deltas)
+
+
 def _sigmoid(x):
     return 1 / (1 + np.exp(-np.clip(x, -30, 30)))
