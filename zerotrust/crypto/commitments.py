@@ -8,6 +8,7 @@ Binding: once committed, prover cannot open to a different value.
 """
 
 import hashlib
+import hmac
 import secrets
 
 
@@ -19,7 +20,10 @@ def commit(value: bytes) -> tuple[bytes, bytes]:
 
 
 def open_commitment(commitment: bytes, value: bytes, randomness: bytes) -> bool:
-    return hashlib.sha256(value + randomness).digest() == commitment
+    # hmac.compare_digest prevents timing oracles that could leak the commitment
+    # preimage by measuring how long the equality check takes.
+    candidate = hashlib.sha256(value + randomness).digest()
+    return hmac.compare_digest(commitment, candidate)
 
 
 def hash_value(value: bytes) -> bytes:
