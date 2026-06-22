@@ -39,10 +39,20 @@ def validate_pubkey(y: int) -> bool:
     return y != 1 and pow(y, Q, P) == 1
 
 
+# Domain separation label prevents cross-protocol attacks where a proof
+# generated in one context is replayed as valid in another.
+_DOMAIN = b"ZeroTrust-Schnorr-v1"
+
+
 def _challenge(R: int, y: int, message: bytes) -> int:
+    R_b = R.to_bytes(256, "big")
+    y_b = y.to_bytes(256, "big")
+    # Hash: domain || len(domain) || R || y || message
     data = (
-        R.to_bytes(256, "big")
-        + y.to_bytes(256, "big")
+        _DOMAIN
+        + len(_DOMAIN).to_bytes(2, "big")
+        + R_b
+        + y_b
         + message
     )
     return int.from_bytes(hashlib.sha256(data).digest(), "big") % Q
