@@ -30,7 +30,13 @@ H = pow(G, 2, P)  # generator of prime-order subgroup
 def keygen() -> tuple[int, int]:
     x = secrets.randbelow(Q - 1) + 1
     y = pow(H, x, P)
+    assert validate_pubkey(y), "keygen produced key outside prime-order subgroup"
     return x, y
+
+
+def validate_pubkey(y: int) -> bool:
+    """Check y is in the prime-order subgroup: y != 1 and y^Q == 1 (mod P)."""
+    return y != 1 and pow(y, Q, P) == 1
 
 
 def _challenge(R: int, y: int, message: bytes) -> int:
@@ -52,6 +58,8 @@ def sign(sk: int, message: bytes) -> tuple[int, int]:
 
 
 def verify(pk: int, message: bytes, sig: tuple[int, int]) -> bool:
+    if not validate_pubkey(pk):
+        return False
     y = pk
     R, s = sig
     e = _challenge(R, y, message)
