@@ -1,22 +1,8 @@
 """
 Schnorr signatures and non-interactive zero-knowledge proofs of discrete log.
 
-Scheme:
-  - Group: prime-order subgroup of Z*_P of order Q (RFC 3526 2048-bit)
-  - Generator h = G^2 mod P  (squaring maps G into the Q-order subgroup)
-  - Private key x ∈ [1, Q-1]
-  - Public key  y = h^x mod P
-
-Signing (= Fiat-Shamir NIZKP of knowledge of x):
-  1. Pick random nonce k ∈ [1, Q-1]
-  2. Commitment R = h^k mod P
-  3. Challenge  e = H(R || y || message) mod Q
-  4. Response   s = (k - x*e) mod Q
-  Signature: (R, s)
-
-Verification:
-  e = H(R || y || message) mod Q
-  Check: h^s * y^e ≡ R (mod P)
+Educational implementation over the RFC 3526 safe-prime subgroup. It is not
+audited and should not be used as a production cryptographic library.
 """
 
 import hashlib
@@ -24,104 +10,123 @@ import secrets
 
 from .params import G, P, Q
 
-H = pow(G, 2, P)  # generator of prime-order subgroup
+H = pow(G, 2, P)
+_DOMAIN = b"ZeroTrust-Schnorr-v1"
 
 
 def keygen() -> tuple[int, int]:
     x = secrets.randbelow(Q - 1) + 1
     y = pow(H, x, P)
-    assert validate_pubkey(y), "keygen produced key outside prime-order subgroup"
+    if not validate_pubkey(y):
+        raise RuntimeError("key generation produced an invalid public key")
     return x, y
 
 
 def validate_pubkey(y: int) -> bool:
-    """Check y is in the prime-order subgroup: y != 1 and y^Q == 1 (mod P)."""
-    return y != 1 and pow(y, Q, P) == 1
+    """Return whether y is a non-identity member of the order-Q subgroup."""
+    return (
+        isinstance(y, int)
+        and not isinstance(y, bool)
+        and 1 < y < P
+        and pow(y, Q, P) == 1
+    )
 
 
-# Domain separation label prevents cross-protocol attacks where a proof
-# generated in one context is replayed as valid in another.
-_DOMAIN = b"ZeroTrust-Schnorr-v1"
+def _valid_scalar(value: int, *, allow_zero: bool = False) -> bool:
+    lower = 0 if allow_zero else 1
+    return isinstance(value, int) and not isinstance(value, bool) and lower <= value < Q
+
+
+def _valid_signature_inputs(pk: int, message: bytes, sig) -> bool:
+    if not validate_pubkey(pk) or not isinstance(message, bytes):
+        return False
+    if not isinstance(sig, (tuple, list)) or len(sig) != 2:
+        return False
+    R, s = sig
+    return (
+        isinstance(R, int)
+        and not isinstance(R, bool)
+        and 1 < R < P
+        and pow(R, Q, P) == 1
+        and _valid_scalar(s, allow_zero=True)
+    )
 
 
 def _challenge(R: int, y: int, message: bytes) -> int:
     R_b = R.to_bytes(256, "big")
     y_b = y.to_bytes(256, "big")
-    # Hash: domain || len(domain) || R || y || message
-    data = (
-        _DOMAIN
-        + len(_DOMAIN).to_bytes(2, "big")
-        + R_b
-        + y_b
-        + message
-    )
+    data = _DOMAIN + len(_DOMAIN).to_bytes(2, "big") + R_b + y_b + message
     return int.from_bytes(hashlib.sha256(data).digest(), "big") % Q
 
 
 def sign(sk: int, message: bytes) -> tuple[int, int]:
+    if not _valid_scalar(sk) or not isinstance(message, bytes):
+        raise ValueError("sk must be in [1, Q-1] and message must be bytes")
     y = pow(H, sk, P)
     k = secrets.randbelow(Q - 1) + 1
     R = pow(H, k, P)
     e = _challenge(R, y, message)
     s = (k - sk * e) % Q
-    return (R, s)
+    return R, s
 
 
 def verify(pk: int, message: bytes, sig: tuple[int, int]) -> bool:
-    if not validate_pubkey(pk):
+    """Verify safely: malformed/untrusted inputs return False, not exceptions."""
+    try:
+        if not _valid_signature_inputs(pk, message, sig):
+            return False
+        R, s = sig
+        e = _challenge(R, pk, message)
+        lhs = (pow(H, s, P) * pow(pk, e, P)) % P
+        return lhs == R
+    except (OverflowError, TypeError, ValueError):
         return False
-    y = pk
-    R, s = sig
-    e = _challenge(R, y, message)
-    lhs = (pow(H, s, P) * pow(y, e, P)) % P
-    return lhs == R
 
 
 def prove_knowledge(sk: int, statement: bytes) -> dict:
-    """NIZKP: prove knowledge of x s.t. y = h^x, without revealing x."""
-    y = pow(H, sk, P)
+    """NIZKP: prove knowledge of x such that pk = h^x, without revealing x."""
     R, s = sign(sk, statement)
-    return {"pk": y, "R": R, "s": s}
+    return {"pk": pow(H, sk, P), "R": R, "s": s}
 
 
 def verify_knowledge(proof: dict, statement: bytes) -> bool:
-    return verify(proof["pk"], statement, (proof["R"], proof["s"]))
+    if not isinstance(proof, dict):
+        return False
+    try:
+        return verify(proof["pk"], statement, (proof["R"], proof["s"]))
+    except (KeyError, TypeError):
+        return False
 
 
-def batch_verify(
-    entries: list[tuple[int, bytes, tuple[int, int]]],
-) -> bool:
-    """
-    Verify n Schnorr signatures with a single multi-exponentiation.
-
-    For each entry (pk_i, msg_i, sig_i) draw a random scalar r_i and check:
-      sum_i( r_i * (h^s_i * pk_i^e_i - R_i) ) == 0  (mod P)
-
-    This is ~2x faster than n individual verifications for large n and is
-    sound under the random oracle model (the r_i are chosen after all sigs
-    are received, so an adversary cannot pre-compute forgeries for them).
-
-    Returns False immediately if any public key fails group membership.
-    """
+def batch_verify(entries: list[tuple[int, bytes, tuple[int, int]]]) -> bool:
+    """Batch-verify Schnorr signatures using fresh random coefficients."""
+    if not isinstance(entries, (list, tuple)):
+        return False
     if not entries:
         return True
 
-    acc = 1
-    for pk, msg, (R, s) in entries:
-        if not validate_pubkey(pk):
+    # Validate every untrusted item before arithmetic. This also prevents
+    # malformed R/s values from reaching modular exponentiation.
+    for entry in entries:
+        if not isinstance(entry, (tuple, list)) or len(entry) != 3:
             return False
+        pk, msg, sig = entry
+        if not _valid_signature_inputs(pk, msg, sig):
+            return False
+
+    acc = 1
+    for pk, msg, sig in entries:
+        R, s = sig
         e = _challenge(R, pk, msg)
         r = secrets.randbelow(Q - 1) + 1
-        # r * (h^s * pk^e - R)  accumulated multiplicatively mod P
         term = (pow(H, s, P) * pow(pk, e, P) * pow(R, P - 2, P)) % P
         acc = (acc * pow(term, r, P)) % P
-
     return acc == 1
 
 
 def proof_to_bytes(proof: dict) -> bytes:
     import json
-    return json.dumps({k: v for k, v in proof.items()}).encode()
+    return json.dumps(proof).encode()
 
 
 def proof_from_bytes(data: bytes) -> dict:
