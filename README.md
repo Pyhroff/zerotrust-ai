@@ -1,5 +1,7 @@
 # ZeroTrust AI
 
+[![CI](https://github.com/Pyhroff/zerotrust-ai/actions/workflows/ci.yml/badge.svg)](https://github.com/Pyhroff/zerotrust-ai/actions/workflows/ci.yml)
+
 **A cryptographic protocol framework for AI accountability, built on a from-scratch Schnorr ZKP implementation.**
 
 Three governance protocols — anonymous prompt evidence, hidden-suite safety auditing, and verifiable machine unlearning — each with a working cryptographic layer and a clean interface for connecting a real model.
